@@ -65,6 +65,48 @@ Zipper::Zipper(std::vector<std::tstring> dirPaths, std::vector<std::tstring> fil
 	}
 }
 	
+bool Zipper::GetInfo() {
+	char byte;
+	std::string info = "||";
+	uintmax_t fileSize = 0;
+	std::error_code ec;
+	for (auto& path : _files) {
+		for (auto it = path.second.begin(); it < path.second.end(); ++it) {
+			fileSize = fs::file_size(path.first + *it, ec);
+			if (ec.value()) {
+				std::tcout << TEXT("Cannot obtain file size of: ") << std::endl << path.first + *it << TEXT("(Removed from archieve)") << std::endl;
+				path.second.erase(it);
+				continue;
+			}
+			info += std::to_string(fileSize);
+			info += "||";
+			{
+				std::string relative = fs::relative(path.first, ec).string() + '/';
+				std::replace(relative.begin(), relative.end(), '\\', '/');
+				std::string pattern("../");
+				auto pos = relative.find(pattern);
+				while (pos != -1) {
+					relative.erase(pos, pattern.length());
+					pos = relative.find(pattern);
+				}
+				if (relative.find("./") == -1) { relative = "./" + relative; }
+				info += relative;
+			}
+			info += "||";
+			info += fs::path(*it).string();
+			info += "||";
+		}
+	}
+	std::fstream fd;
+	fd.open(_outPath, std::ios::out);
+	if (fd.is_open()) {
+		fd << info << std::endl;
+	} else {
+		std::tcout << TEXT("Cannot open output file.");
+		return true;
+	}
+	return false;
+}
 
 // interface
 // --dirs folder relative/absolute
@@ -118,4 +160,5 @@ int tmain(int argc, const tchar* argv[]) {
 	auto out = find(args, TEXT("--out "), TEXT(" --"));
 	//std::tcout << out << std::endl;
 	Zipper zip(dirs, files, out);
+	zip.GetInfo();
 }

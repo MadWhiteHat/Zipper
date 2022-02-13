@@ -9,8 +9,6 @@
 #include <fstream>
 #include <filesystem>
 #include <map>
-#include <initializer_list>
-
 namespace fs = std::filesystem;
 
 #ifdef _UNICODE
@@ -42,10 +40,10 @@ class Zipper {
 
 		Zipper(std::vector<std::tstring>, std::vector<std::tstring>, std::tstring);
 		
-		void GetInfo();
 		void Compress();
 		void Decompress();
 		//void Print();
+		bool GetInfo();
 
 	private:
 		int Digits(unsigned long long int);
