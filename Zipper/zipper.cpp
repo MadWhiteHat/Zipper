@@ -9,7 +9,7 @@
 //	}
 //}
 
-Zipper::Zipper(std::vector<std::tstring> dirPaths, std::vector<std::tstring> filePaths, std::tstring outPath) :{
+Zipper::Zipper(std::vector<std::tstring> dirPaths, std::vector<std::tstring> filePaths, std::tstring outPath) {
 	std::error_code ec;
 	for (auto& dir : dirPaths) {
 		if (fs::exists(dir, ec)) {
@@ -118,5 +118,4 @@ int tmain(int argc, const tchar* argv[]) {
 	auto out = find(args, TEXT("--out "), TEXT(" --"));
 	//std::tcout << out << std::endl;
 	Zipper zip(dirs, files, out);
-	zip.Print();
 }
