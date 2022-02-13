@@ -81,7 +81,8 @@ bool Zipper::GetInfo() {
 			info += std::to_string(fileSize);
 			info += "||";
 			{
-				std::string relative = fs::relative(path.first, ec).string() + '/';
+				std::string relative = fs::relative(path.first, ec).string();
+				if (!relative.empty()) { relative += '/'; }
 				std::replace(relative.begin(), relative.end(), '\\', '/');
 				std::string pattern("../");
 				auto pos = relative.find(pattern);
