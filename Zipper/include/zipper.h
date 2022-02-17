@@ -1,52 +1,43 @@
 #ifndef _ZIPPER_H
 #define _ZIPPER_H
 
-#include <iostream>
-#include <string>
-#include <vector>
-#include <clocale>
-#include <utility>
-#include <fstream>
+
 #include <filesystem>
 #include <map>
+
+#include "tchar.h"
+#include "main.h"
+
 namespace fs = std::filesystem;
 
-#ifdef _UNICODE
-#define tstring wstring
-#define tchar wchar_t
-#define tcout wcout
-#define TEXT(str) L ## str
-#define tmain wmain
-#else 
-#define tstring string
-#define tchar char
-#define tcout cout
-#define TEXT(str) str
-#define tmain main
-#endif // _UNICODE
-
-#ifdef WIN32
-#endif // WIN32
-
-
-// Add syslog status
+#define TMP_EXT TEXT(".tmp")
 
 class Zipper {
-	typedef std::map<std::tstring, std::vector<std::tstring>> file;
+	typedef std::pair<size_t, size_t> fileSizeInfo;
+	typedef std::pair<std::tstring, fileSizeInfo> fileInfo;
+	typedef std::map<std::tstring, std::vector<fileInfo>> file;
+	typedef std::vector<std::vector<char>> myList;
+
 	private:
 		file _files;
 		std::tstring _outPath;
 	public:
 
-		Zipper(std::vector<std::tstring>, std::vector<std::tstring>, std::tstring);
+		Zipper(std::tstring);
 		
-		void Compress();
-		void Decompress();
-		//void Print();
-		bool GetInfo();
+		void Create(std::vector<std::tstring>, std::vector<std::tstring>);
+		void Extract();
 
 	private:
-		int Digits(unsigned long long int);
+		void EncodeAll();
+		void DecodeAll();
+		void GetSize();
+		void VerifyOutput();
+		void ParseInput(std::vector<std::tstring>&, std::vector<std::tstring>&);
+		void MakeOne();
+		bool ParseConfig();
+		bool MakeHierarchy();
+		void AddFile(fs::path, std::error_code&);
 };
 
 #endif // !_ZIPPER_H

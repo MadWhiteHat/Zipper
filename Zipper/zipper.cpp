@@ -1,165 +1,304 @@
 #include "include\zipper.h"
+#include "include\lz.h"
 
-//void Zipper::Print() {
-//	for (auto& dir : _files) {
-//		std::tcout << TEXT("Dir: ") << dir.first << std::endl;
-//		for (auto& file : dir.second) {
-//			std::tcout << file << std::endl;
-//		}
-//	}
-//}
+// interface
+// --dirs folder relative/absolute
+// --files file relative/absolute
+// --unpack
+// --out out file name
+// default pack
 
-Zipper::Zipper(std::vector<std::tstring> dirPaths, std::vector<std::tstring> filePaths, std::tstring outPath) {
-	std::error_code ec;
-	for (auto& dir : dirPaths) {
-		if (fs::exists(dir, ec)) {
-			for (auto& file : fs::recursive_directory_iterator(dir)) {
-				if (!fs::is_directory(file)) {
-					std::tstring path;
-					try {
-						path = fs::absolute(file, ec).tstring();
-					}
-					catch (...) {}
-					path = path.substr(0, path.find(fs::path(path).filename()));
-					_files[path].push_back(fs::path(file).filename().tstring());
-				}
-			}	
-		} else {
-			std::tcout << TEXT("Directory: ") << dir.data() << TEXT(" doesn't exists. Excluding from archieve") << std::endl;
-		}
+
+Zipper::Zipper(std::tstring outPath) : _outPath(outPath) {}
+
+void Zipper::Create(std::vector<std::tstring> dirPaths, std::vector<std::tstring> filePaths) {
+	ParseInput(dirPaths, filePaths);
+	VerifyOutput();
+	EncodeAll();
+	GetSize();
+	MakeOne();
+
+}
+
+bool Zipper::ParseConfig() {
+	std::tfstream fd;
+	std::tstring info;
+
+	_files.clear();	
+	fd.open(_outPath, std::ios::binary | std::ios::in);
+	if (!fd.is_open()) {
+		std::tcout << TEXT("Cannot open archieve file.") << std::endl;
+		return true;
 	}
-	for (auto& file : filePaths) {
+	
+	tchar buf[3] = { 0 };
+	fd.read(buf, 2);
+	info = buf;
+
+	if (info.find(TEXT("||")) != 0) {
 		
-		if (fs::exists(file, ec)) {
-			std::tstring path;
-			try {
-				path = fs::absolute(file, ec).tstring();
-			}
-			catch (...) {}
-			path = path.substr(0, path.find(fs::path(path).filename()));
-			_files[path].push_back(fs::path(file).filename().tstring());
-		} else {
-			std::tcout << TEXT("File: ") << file.data() << TEXT(" doesn't exists. Excluding from archieve") << std::endl;
+		std::tcout << TEXT("Invalid archieve file.") << std::endl;
+		return true;
+	}
+
+	fd.seekg(0);
+	info.clear();
+	std::getline(fd, info);
+	fd.close();
+	if (info.find(0x0d) != std::tstring::npos) { info.erase(info.find(0x0d)); }
+	{
+		size_t filesCnt = 0;
+
+		for (auto it = info.begin(); it < info.end(); ++it) {
+			if (*it == '|' && *(it + 1) == '|') { filesCnt++; }
+		}
+		if (filesCnt % 4) {
+			std::tcout << TEXT("Invalid archieve file.") << std::endl;
+			return true;
 		}
 	}
+
+
+	{
+
+		std::tstring tmpFile, tmpPath;
+		size_t fileStart = 0;
+		size_t fileSize = 0;
+		size_t pos = 0;
+		while (info.find(TEXT("||")) != std::tstring::npos) {
+			info.erase(0, pos + 2);
+			pos = info.find(TEXT("||"));
+			fileStart = std::stoll(info.substr(0, pos));
+			info.erase(0, pos + 2);
+			pos = info.find(TEXT("||"));
+			fileSize = std::stoll(info.substr(0, pos));
+			info.erase(0, pos + 2);
+			pos = info.find(TEXT("||"));
+			tmpPath = info.substr(0, pos);
+			info.erase(0, pos + 2);
+			pos = info.find(TEXT("||"));
+			tmpFile = info.substr(0, pos);
+			_files[tmpPath].push_back(fileInfo(tmpFile, fileSizeInfo(fileStart,fileSize)));
+		}
+	}
+	return false;
+}
+
+
+void Zipper::Extract() {
+	
+	if (ParseConfig()) {
+		std::tcout << TEXT("ParseConfig fail") << std::endl;
+		return;
+	}
+	if (MakeHierarchy()) {
+		std::tcout << TEXT("MakeHierarchy fail") << std::endl;
+		return;
+	}
+	DecodeAll();
+
+	return;
+}
+
+void Zipper::GetSize() {
+	uintmax_t fileSize = 0;
+	std::error_code ec;
+	for (auto& dir : _files) {
+		for (auto& file : dir.second) {
+			file.second.first = fileSize;
+			file.second.second = fs::file_size(dir.first + file.first + TMP_EXT, ec);
+			fileSize += file.second.second;
+		}
+	}
+	return;
+}
+
+void Zipper::VerifyOutput() {
+	std::error_code ec;
 	std::tstring path;
 	try {
-		path = fs::absolute(outPath).tstring();
+		path = fs::absolute(_outPath).tstring();
 		path = path.substr(0, path.find(fs::path(path).filename()));
 		fs::create_directories(path);
 	}
 	catch (...) {}
-	std::fstream fd;
-	fd.open(fs::path(outPath).tstring(), std::ios::out);
+	std::tfstream fd;
+	fd.open(fs::path(_outPath).tstring(), std::ios::out);
 	if (!fd.is_open()) {
 		_outPath = (fs::current_path() += TEXT("\\zipped.myzip")).tstring();
 		std::tcout << TEXT("Cannot resolve output filename. Default filename set:") << std::endl << _outPath << std::endl;
 		try {
 			fs::remove_all(path, ec);
-		} catch(...) {}
+		}
+		catch (...) {}
 	}
 	else {
-		_outPath = outPath;
 		fd.close();
-		fs::remove(outPath,ec);
+		fs::remove(_outPath, ec);
 	}
 }
-	
-bool Zipper::GetInfo() {
-	char byte;
-	std::string info = "||";
-	uintmax_t fileSize = 0;
+
+
+void Zipper::ParseInput(std::vector<std::tstring>& dirPaths, std::vector<std::tstring>& filePaths) {
+
 	std::error_code ec;
-	for (auto& path : _files) {
-		for (auto it = path.second.begin(); it < path.second.end(); ++it) {
-			fileSize = fs::file_size(path.first + *it, ec);
-			if (ec.value()) {
-				std::tcout << TEXT("Cannot obtain file size of: ") << std::endl << path.first + *it << TEXT("(Removed from archieve)") << std::endl;
-				path.second.erase(it);
-				continue;
+	for (auto& dir : dirPaths) {
+		if (fs::exists(dir, ec)) {
+			for (auto& file : fs::recursive_directory_iterator(dir)) {
+				if (!fs::is_directory(file)) {
+					AddFile(file.path(), ec);
+				}
 			}
-			info += std::to_string(fileSize);
-			info += "||";
+		}
+		else {
+			std::tcout << TEXT("Directory: ") << dir.data() << TEXT(" doesn't exists. Excluding from archieve") << std::endl;
+		}
+	}
+	for (auto& file : filePaths) {
+
+		if (fs::exists(file, ec)) {
+			AddFile(file, ec);
+		}
+		else {
+			std::tcout << TEXT("File: ") << file.data() << TEXT(" doesn't exists. Excluding from archieve") << std::endl;
+		}
+	}
+
+}
+
+
+void Zipper::MakeOne() {
+
+	std::tfstream fd;
+	std::error_code ec;
+
+	fd.open(_outPath, std::ios::out);
+	if (!fd.is_open()) {
+		std::tcout << TEXT("Cannot open output file.") << std::endl;
+		return;
+	}
+	for (auto& dir : _files) {
+		for (auto& file : dir.second) {
+			fd <<  TEXT("||");
+			fd <<  std::to_tstring(file.second.first);
+			fd <<  TEXT("||");
+			fd <<  std::to_tstring(file.second.second);
+			fd <<  TEXT("||");
 			{
-				std::string relative = fs::relative(path.first, ec).string();
+				std::tstring relative = fs::relative(dir.first, ec).tstring();
 				if (!relative.empty()) { relative += '/'; }
 				std::replace(relative.begin(), relative.end(), '\\', '/');
-				std::string pattern("../");
+				std::tstring pattern(TEXT("../"));
 				auto pos = relative.find(pattern);
-				while (pos != -1) {
+				while (pos != std::tstring::npos) {
 					relative.erase(pos, pattern.length());
 					pos = relative.find(pattern);
 				}
-				if (relative.find("./") == -1) { relative = "./" + relative; }
-				info += relative;
+				if (relative.find(TEXT("./")) == std::tstring::npos) { relative = TEXT("./") + relative; }
+				fd << relative;
 			}
-			info += "||";
-			info += fs::path(*it).string();
-			info += "||";
+			fd <<  TEXT("||");
+			fd << fs::path(file.first).tstring();
 		}
 	}
-	std::fstream fd;
-	fd.open(_outPath, std::ios::out);
-	if (fd.is_open()) {
-		fd << info << std::endl;
-	} else {
-		std::tcout << TEXT("Cannot open output file.");
+	fd << std::endl;
+	fd.close();
+
+	char byte;
+	std::fstream fdIn, fdOut;
+	fdOut.open(_outPath, std::ios::binary | std::ios::app);
+	if (!fdOut.is_open()) {
+		std::tcout << TEXT("Cannot open output file.") << std::endl;
+		return;
+	}
+
+	for (auto& path : _files) {
+		for (auto& file : path.second) {
+			fdIn.open(path.first + file.first + TMP_EXT, std::ios::binary | std::ios::in);
+			if (!fdIn.is_open()) {
+				std::tcout << TEXT("Cannot open input file.") << std::endl;
+				fdOut.close();
+				return;
+			}
+			while (fdIn.get(byte)) {
+				fdOut << byte;
+			}
+			fdIn.close();
+			fs::remove(path.first + file.first + TMP_EXT, ec);
+		}
+	}
+	fdOut.close();
+}
+
+bool Zipper::MakeHierarchy() {
+	std::fstream fdIn, fdOut;
+	std::error_code ec;
+	for (auto& dir : _files) {
+		fs::create_directories(dir.first, ec);
+		if (ec.value() != 0) { 
+			std::tcout << TEXT("Cannot create directory.") << std::endl;
+			return true; 
+		}
+	}
+
+	fdIn.open(_outPath, std::ios::binary | std::ios::in);
+	if (!fdIn.is_open()) {
+		std::tcout << TEXT("Cannot open input file.") << std::endl;
 		return true;
 	}
+
+	size_t confLen = 0;
+	{
+		std::string dummy;
+		std::getline(fdIn, dummy);
+		confLen = fdIn.tellg();
+	}
+
+	char byte;
+	for (auto& dir : _files) {
+		for (auto& file : dir.second) {
+			fdOut.open(dir.first + file.first + TMP_EXT, std::ios::binary | std::ios::out);
+			if (!fdOut.is_open()) {
+				std::tcout << TEXT("Cannot open output file.") << std::endl;
+				return true;
+			}
+			size_t end = confLen + file.second.first + file.second.second;
+			for (size_t i = confLen + file.second.first; i < end && fdIn.get(byte); ++i) {
+				fdOut << byte;
+			}
+			fdOut.close();
+		}
+	}
+
+	fdIn.close();
 	return false;
 }
 
-// interface
-// --dirs folder relative/absolute
-// --files file relative/absolute
-// -u unpack
-// -p pack
-// --out out file name
-
-std::tstring find(const std::tstring& str, std::tstring what, std::tstring delim) {
-	if (str.find(what) != -1) {
-		size_t sPos = str.find(what) + what.length();
-		size_t ePos = str.find(delim, sPos);
-		return str.substr(sPos, ePos - sPos);
+void Zipper::AddFile(fs::path file, std::error_code& ec) {
+	std::tstring path;
+	try {
+		path = fs::absolute(file, ec).tstring();
 	}
-	return std::tstring(TEXT(""));
+	catch (...) {}
+	path = path.substr(0, path.find(fs::path(path).filename()));
+	_files[path].push_back(fileInfo(fs::path(file).filename().tstring(), fileSizeInfo(0, fs::file_size(file, ec))));
 }
 
-std::vector<std::tstring> vectorize(const std::tstring& str, std::tstring what, std::tstring delim) {
-	std::tstring toVect = find(str, what, delim);
-	std::vector<std::tstring> vect;
-
-	while (toVect.length()) {
-		std::tstring buf = find(toVect, std::tstring(toVect.begin(), toVect.begin()), std::tstring(TEXT(" "), 1));
-		if (buf.length() > 0) {
-			vect.push_back(buf);
+void Zipper::EncodeAll() {
+	for (auto& dir : _files) {
+		for (auto& file : dir.second) {
+			std::tcout << TEXT("Encrypting ") << dir.first + file.first << std::endl;
+			encode(fs::path(dir.first + file.first).string());
 		}
-		toVect.erase(0, buf.length() + 1);
 	}
-	return vect;
 }
 
-int tmain(int argc, const tchar* argv[]) {
-	
-	
-	std::tstring args;
-	for (auto i = 1; i < argc; ++i) {
-		args += argv[i];
-		args += TEXT(" ");
+void Zipper::DecodeAll() {
+	for (auto& dir : _files) {
+		for (auto& file : dir.second) {
+			std::tcout << TEXT("Decrypting ") << dir.first + file.first << std::endl;
+			decode(fs::path(dir.first + file.first).string());
+			fs::remove(dir.first + file.first + TMP_EXT);
+		}
 	}
-	//std::tcout << TEXT("Dirs:") << std::endl;
-	auto dirs = vectorize(args, TEXT("--dirs "), TEXT(" --"));
-	//for (auto& el : dirs) {
-		//std::tcout << el << " " << el.length() << std::endl;
-	//}
-	//std::tcout << TEXT("Files:") << std::endl;
-	auto files = vectorize(args, TEXT("--files "), TEXT(" --"));
-	//for (auto& el : files) {
-		//std::tcout << el << " " << el.length() << std::endl;
-	//}
-	//std::tcout << TEXT("Output: ") << std::endl;
-	auto out = find(args, TEXT("--out "), TEXT(" --"));
-	//std::tcout << out << std::endl;
-	Zipper zip(dirs, files, out);
-	zip.GetInfo();
 }
